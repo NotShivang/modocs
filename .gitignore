@@ -1,0 +1,17 @@
+*.iml
+.gradle
+.claude/
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Module build directories
+**/build/
+
+# Gradle wrapper jar (some projects check this in, we don't)
+!gradle/wrapper/gradle-wrapper.jar
