@@ -318,7 +318,7 @@ private fun PlaceholderScreen(title: String) {
                 .padding(innerPadding),
             contentAlignment = Alignment.Center,
         ) {
-            Text(text = title)
+            Text(text = "$title — coming soon")
         }
     }
 }
