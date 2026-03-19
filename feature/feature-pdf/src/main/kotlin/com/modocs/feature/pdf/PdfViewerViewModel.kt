@@ -65,8 +65,11 @@ data class FillSignState(
     val editingText: String = "",
     val isSaving: Boolean = false,
     val isDirty: Boolean = false,
+    /** Currently selected annotation for moving/resizing. */
+    val selectedAnnotationId: String? = null,
 ) {
     val hasAnnotations: Boolean get() = annotations.isNotEmpty()
+    val selectedAnnotation: PdfAnnotation? get() = annotations.find { it.id == selectedAnnotationId }
 }
 
 @HiltViewModel
@@ -321,11 +324,12 @@ class PdfViewerViewModel @Inject constructor(
 
     fun selectTool(tool: FillSignTool) {
         val current = _fillSignState.value
-        // Cancel any pending editing
+        // Cancel any pending editing and deselect annotation
         _fillSignState.value = current.copy(
             selectedTool = tool,
             editingAnnotationId = null,
             editingText = "",
+            selectedAnnotationId = null,
         )
         if (tool == FillSignTool.SIGNATURE && current.pendingSignature == null) {
             _fillSignState.value = _fillSignState.value.copy(showSignaturePad = true)
@@ -350,9 +354,61 @@ class PdfViewerViewModel @Inject constructor(
         )
     }
 
+    /**
+     * Hit-test: check if a tap hits an existing annotation on this page.
+     * Returns the annotation ID if hit, null otherwise.
+     */
+    fun hitTestAnnotation(pageIndex: Int, normX: Float, normY: Float, pageWidthPx: Float, pageHeightPx: Float): String? {
+        val annotations = _fillSignState.value.annotations.filter { it.pageIndex == pageIndex }
+        val scaleFactor = pageWidthPx / 595f
+
+        // Check in reverse order (topmost first)
+        for (ann in annotations.reversed()) {
+            val ax = ann.x
+            val ay = ann.y
+            when (ann) {
+                is TextAnnotation -> {
+                    if (ann.text.isEmpty()) continue
+                    val textH = ann.fontSizeSp * scaleFactor / pageHeightPx
+                    val textW = ann.text.length * ann.fontSizeSp * 0.6f * scaleFactor / pageWidthPx
+                    if (normX in ax..(ax + textW) && normY in ay..(ay + textH * 1.5f)) return ann.id
+                }
+                is DateAnnotation -> {
+                    val textH = ann.fontSizeSp * scaleFactor / pageHeightPx
+                    val textW = ann.dateText.length * ann.fontSizeSp * 0.6f * scaleFactor / pageWidthPx
+                    if (normX in ax..(ax + textW) && normY in ay..(ay + textH * 1.5f)) return ann.id
+                }
+                is CheckmarkAnnotation -> {
+                    val sz = ann.sizeSp * scaleFactor
+                    val szNormW = sz / pageWidthPx
+                    val szNormH = sz / pageHeightPx
+                    if (normX in (ax - szNormW * 0.2f)..(ax + szNormW * 1.2f) &&
+                        normY in (ay - szNormH * 0.2f)..(ay + szNormH * 1.2f)) return ann.id
+                }
+                is SignatureAnnotation -> {
+                    if (normX in ax..(ax + ann.width) && normY in ay..(ay + ann.height)) return ann.id
+                }
+            }
+        }
+        return null
+    }
+
     fun onPageTap(pageIndex: Int, normalizedX: Float, normalizedY: Float, pageWidthPx: Float, pageHeightPx: Float) {
         val current = _fillSignState.value
         if (!current.isActive) return
+
+        // Hit-test existing annotations first
+        val hitId = hitTestAnnotation(pageIndex, normalizedX, normalizedY, pageWidthPx, pageHeightPx)
+        if (hitId != null) {
+            _fillSignState.value = current.copy(selectedAnnotationId = hitId)
+            return
+        }
+
+        // Deselect if tapping empty space while something is selected
+        if (current.selectedAnnotationId != null) {
+            _fillSignState.value = current.copy(selectedAnnotationId = null)
+            return
+        }
 
         when (current.selectedTool) {
             FillSignTool.TEXT -> {
@@ -505,11 +561,54 @@ class PdfViewerViewModel @Inject constructor(
         )
     }
 
+    fun selectAnnotation(id: String?) {
+        _fillSignState.value = _fillSignState.value.copy(selectedAnnotationId = id)
+    }
+
+    fun moveAnnotation(id: String, newX: Float, newY: Float) {
+        val current = _fillSignState.value
+        _fillSignState.value = current.copy(
+            annotations = current.annotations.map { ann ->
+                if (ann.id != id) return@map ann
+                when (ann) {
+                    is TextAnnotation -> ann.copy(x = newX, y = newY)
+                    is SignatureAnnotation -> ann.copy(x = newX, y = newY)
+                    is CheckmarkAnnotation -> ann.copy(x = newX, y = newY)
+                    is DateAnnotation -> ann.copy(x = newX, y = newY)
+                }
+            },
+            isDirty = true,
+        )
+    }
+
+    fun changeAnnotationSize(id: String, delta: Float) {
+        val current = _fillSignState.value
+        _fillSignState.value = current.copy(
+            annotations = current.annotations.map { ann ->
+                if (ann.id != id) return@map ann
+                when (ann) {
+                    is TextAnnotation -> ann.copy(fontSizeSp = (ann.fontSizeSp + delta).coerceIn(6f, 72f))
+                    is DateAnnotation -> ann.copy(fontSizeSp = (ann.fontSizeSp + delta).coerceIn(6f, 72f))
+                    is CheckmarkAnnotation -> ann.copy(sizeSp = (ann.sizeSp + delta).coerceIn(8f, 60f))
+                    is SignatureAnnotation -> {
+                        val scaleFactor = 1f + (delta / 20f)
+                        ann.copy(
+                            width = (ann.width * scaleFactor).coerceIn(0.05f, 0.8f),
+                            height = (ann.height * scaleFactor).coerceIn(0.02f, 0.3f),
+                        )
+                    }
+                }
+            },
+            isDirty = true,
+        )
+    }
+
     fun undoLastAnnotation() {
         val current = _fillSignState.value
         if (current.annotations.isEmpty()) return
         _fillSignState.value = current.copy(
             annotations = current.annotations.dropLast(1),
+            selectedAnnotationId = null,
             isDirty = current.annotations.size > 1,
         )
     }

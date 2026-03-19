@@ -12,6 +12,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -238,6 +239,16 @@ fun PdfViewerScreen(
                         saveAsLauncher.launch(name)
                     },
                     onNewSignature = { viewModel.showSignaturePad() },
+                    onSizeChange = { delta ->
+                        fillSignState.selectedAnnotationId?.let { viewModel.changeAnnotationSize(it, delta) }
+                    },
+                    onDeleteSelected = {
+                        fillSignState.selectedAnnotationId?.let {
+                            viewModel.deleteAnnotation(it)
+                            viewModel.selectAnnotation(null)
+                        }
+                    },
+                    onDeselectAnnotation = { viewModel.selectAnnotation(null) },
                 )
             }
 
@@ -277,7 +288,12 @@ private fun FillSignToolbar(
     onUndo: () -> Unit,
     onSave: () -> Unit,
     onNewSignature: () -> Unit,
+    onSizeChange: (delta: Float) -> Unit,
+    onDeleteSelected: () -> Unit,
+    onDeselectAnnotation: () -> Unit,
 ) {
+    val selectedAnnotation = fillSignState.selectedAnnotation
+
     Surface(
         tonalElevation = 2.dp,
         modifier = Modifier.fillMaxWidth(),
@@ -297,13 +313,14 @@ private fun FillSignToolbar(
                     label = "Text",
                     icon = Icons.Default.TextFields,
                     selected = fillSignState.selectedTool == FillSignTool.TEXT,
-                    onClick = { onSelectTool(FillSignTool.TEXT) },
+                    onClick = { onDeselectAnnotation(); onSelectTool(FillSignTool.TEXT) },
                 )
                 ToolChip(
                     label = "Sign",
                     icon = Icons.Default.Draw,
                     selected = fillSignState.selectedTool == FillSignTool.SIGNATURE,
                     onClick = {
+                        onDeselectAnnotation()
                         if (fillSignState.selectedTool == FillSignTool.SIGNATURE) {
                             onNewSignature()
                         } else {
@@ -315,23 +332,23 @@ private fun FillSignToolbar(
                     label = "\u2713",
                     icon = Icons.Default.CheckBox,
                     selected = fillSignState.selectedTool == FillSignTool.CHECKMARK,
-                    onClick = { onSelectTool(FillSignTool.CHECKMARK) },
+                    onClick = { onDeselectAnnotation(); onSelectTool(FillSignTool.CHECKMARK) },
                 )
                 ToolChip(
                     label = "\u2717",
                     icon = Icons.Default.Close,
                     selected = fillSignState.selectedTool == FillSignTool.CROSS,
-                    onClick = { onSelectTool(FillSignTool.CROSS) },
+                    onClick = { onDeselectAnnotation(); onSelectTool(FillSignTool.CROSS) },
                 )
                 ToolChip(
                     label = "Date",
                     icon = Icons.Default.CalendarToday,
                     selected = fillSignState.selectedTool == FillSignTool.DATE,
-                    onClick = { onSelectTool(FillSignTool.DATE) },
+                    onClick = { onDeselectAnnotation(); onSelectTool(FillSignTool.DATE) },
                 )
             }
 
-            // Row 2: Actions + hint
+            // Row 2: Actions, size controls, or hint
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -356,20 +373,80 @@ private fun FillSignToolbar(
                     }
                 }
 
-                Spacer(modifier = Modifier.width(8.dp))
+                if (selectedAnnotation != null) {
+                    Spacer(modifier = Modifier.width(4.dp))
 
-                if (fillSignState.selectedTool == FillSignTool.SIGNATURE && fillSignState.pendingSignature != null) {
+                    // Size controls for selected annotation
+                    Surface(
+                        shape = MaterialTheme.shapes.small,
+                        tonalElevation = 4.dp,
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { onSizeChange(-2f) },
+                                modifier = Modifier.size(32.dp),
+                            ) {
+                                Text("A", style = MaterialTheme.typography.labelSmall)
+                            }
+
+                            val sizeLabel = when (selectedAnnotation) {
+                                is TextAnnotation -> "${selectedAnnotation.fontSizeSp.toInt()}"
+                                is DateAnnotation -> "${selectedAnnotation.fontSizeSp.toInt()}"
+                                is CheckmarkAnnotation -> "${selectedAnnotation.sizeSp.toInt()}"
+                                is SignatureAnnotation -> "${(selectedAnnotation.width * 100).toInt()}%"
+                            }
+                            Text(
+                                text = sizeLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(horizontal = 2.dp),
+                            )
+
+                            IconButton(
+                                onClick = { onSizeChange(2f) },
+                                modifier = Modifier.size(32.dp),
+                            ) {
+                                Text("A", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(4.dp))
+
+                    // Delete selected annotation
+                    IconButton(
+                        onClick = onDeleteSelected,
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Delete",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.weight(1f))
                     Text(
-                        text = "Tap to place signature",
+                        text = "Drag to move",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary,
                     )
-                } else if (fillSignState.selectedTool == FillSignTool.TEXT) {
-                    Text(
-                        text = "Tap to add text",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                } else {
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    if (fillSignState.selectedTool == FillSignTool.SIGNATURE && fillSignState.pendingSignature != null) {
+                        Text(
+                            text = "Tap to place signature",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    } else if (fillSignState.selectedTool == FillSignTool.TEXT) {
+                        Text(
+                            text = "Tap to add text",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
@@ -627,8 +704,12 @@ private fun PdfPagesContent(
                     highlightVersion = highlightVersion,
                     fillSignActive = fillSignState.isActive,
                     annotations = pageAnnotations,
+                    selectedAnnotationId = fillSignState.selectedAnnotationId,
                     onPageTap = { normX, normY, widthPx, heightPx ->
                         viewModel.onPageTap(pageIndex, normX, normY, widthPx, heightPx)
+                    },
+                    onAnnotationDrag = { id, normX, normY ->
+                        viewModel.moveAnnotation(id, normX, normY)
                     },
                 )
             }
@@ -644,7 +725,9 @@ private fun PdfPage(
     highlightVersion: Pair<Int, Int>,
     fillSignActive: Boolean,
     annotations: List<PdfAnnotation>,
+    selectedAnnotationId: String?,
     onPageTap: (normalizedX: Float, normalizedY: Float, widthPx: Float, heightPx: Float) -> Unit,
+    onAnnotationDrag: (id: String, newNormX: Float, newNormY: Float) -> Unit,
 ) {
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
@@ -673,14 +756,31 @@ private fun PdfPage(
                 }
                 .then(
                     if (fillSignActive) {
-                        Modifier.pointerInput(Unit) {
+                        Modifier.pointerInput(selectedAnnotationId) {
                             detectTapGestures { offset ->
-                                if (composableWidth > 0 && composableHeight > 0) {
+                                if (composableWidth > 0) {
                                     val aspectRatio = bmp.height.toFloat() / bmp.width.toFloat()
                                     val imageHeight = composableWidth * aspectRatio
                                     val normX = (offset.x / composableWidth).coerceIn(0f, 1f)
                                     val normY = (offset.y / imageHeight).coerceIn(0f, 1f)
                                     onPageTap(normX, normY, composableWidth.toFloat(), imageHeight)
+                                }
+                            }
+                        }
+                    } else Modifier
+                )
+                .then(
+                    if (fillSignActive && selectedAnnotationId != null &&
+                        annotations.any { it.id == selectedAnnotationId }) {
+                        Modifier.pointerInput(selectedAnnotationId) {
+                            detectDragGestures { change, _ ->
+                                change.consume()
+                                if (composableWidth > 0) {
+                                    val aspectRatio = bmp.height.toFloat() / bmp.width.toFloat()
+                                    val imageHeight = composableWidth * aspectRatio
+                                    val normX = (change.position.x / composableWidth).coerceIn(0f, 1f)
+                                    val normY = (change.position.y / imageHeight).coerceIn(0f, 1f)
+                                    onAnnotationDrag(selectedAnnotationId, normX, normY)
                                 }
                             }
                         }
@@ -745,10 +845,13 @@ private fun PdfPage(
                     val h = size.height
                     // Use page-relative scaling so preview matches saved output exactly
                     val scaleFactor = w / 595f
+                    val selectionColor = Color(0xFF1976D2)
+                    val selectionStroke = Stroke(width = 2.dp.toPx(), pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(8f, 4f)))
 
                     for (annotation in annotations) {
                         val px = annotation.x * w
                         val py = annotation.y * h
+                        val isSelected = annotation.id == selectedAnnotationId
 
                         when (annotation) {
                             is TextAnnotation -> {
@@ -760,6 +863,10 @@ private fun PdfPage(
                                     drawContext.canvas.nativeCanvas.drawText(
                                         annotation.text, px, py + paint.textSize, paint,
                                     )
+                                    if (isSelected) {
+                                        val textW = paint.measureText(annotation.text)
+                                        drawRect(selectionColor, Offset(px - 2, py), Size(textW + 4, paint.textSize * 1.3f), style = selectionStroke)
+                                    }
                                 }
                             }
 
@@ -786,6 +893,9 @@ private fun PdfPage(
                                         }
                                     }
                                     drawPath(path, Color.Black, style = strokeStyle)
+                                }
+                                if (isSelected) {
+                                    drawRect(selectionColor, Offset(px, py), Size(sigW, sigH), style = selectionStroke)
                                 }
                             }
 
@@ -817,6 +927,9 @@ private fun PdfPage(
                                         strokeWidth = 2.5f * scaleFactor,
                                     )
                                 }
+                                if (isSelected) {
+                                    drawRect(selectionColor, Offset(px - 2, py - 2), Size(sz + 4, sz + 4), style = selectionStroke)
+                                }
                             }
 
                             is DateAnnotation -> {
@@ -827,6 +940,10 @@ private fun PdfPage(
                                 drawContext.canvas.nativeCanvas.drawText(
                                     annotation.dateText, px, py + paint.textSize, paint,
                                 )
+                                if (isSelected) {
+                                    val textW = paint.measureText(annotation.dateText)
+                                    drawRect(selectionColor, Offset(px - 2, py), Size(textW + 4, paint.textSize * 1.3f), style = selectionStroke)
+                                }
                             }
                         }
                     }
