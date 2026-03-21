@@ -46,7 +46,6 @@ import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SaveAs
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -168,6 +167,7 @@ fun DocxViewerScreen(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
+            Column {
             TopAppBar(
                 title = {
                     Column {
@@ -245,8 +245,7 @@ fun DocxViewerScreen(
                 },
                 scrollBehavior = scrollBehavior,
             )
-        },
-        bottomBar = {
+
             if (state.isEditing && state.editingElementIndex >= 0) {
                 val editingPara = state.document?.body?.getOrNull(state.editingElementIndex) as? DocxParagraph
                 val runProps = editingPara?.runs?.firstOrNull()?.properties
@@ -259,6 +258,7 @@ fun DocxViewerScreen(
                     onItalicClick = { viewModel.toggleItalic(state.editingElementIndex) },
                     onUnderlineClick = { viewModel.toggleUnderline(state.editingElementIndex) },
                 )
+            }
             }
         },
     ) { innerPadding ->
@@ -695,11 +695,9 @@ private fun FormattingToolbar(
     onItalicClick: () -> Unit,
     onUnderlineClick: () -> Unit,
 ) {
-    BottomAppBar(
-        tonalElevation = 4.dp,
-    ) {
+    Surface(tonalElevation = 2.dp) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.Start,
             verticalAlignment = Alignment.CenterVertically,
         ) {
