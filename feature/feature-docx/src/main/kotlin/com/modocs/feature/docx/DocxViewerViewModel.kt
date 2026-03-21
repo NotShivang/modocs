@@ -32,6 +32,7 @@ data class DocxViewerState(
     val viewMode: DocxViewMode = DocxViewMode.CANVAS,
     val pageCount: Int = 0,
     val currentPage: Int = 0,
+    val formattingVersion: Int = 0,
 )
 
 data class DocxSearchState(
@@ -85,6 +86,9 @@ class DocxViewerViewModel @Inject constructor(
     private val _searchState = MutableStateFlow(DocxSearchState())
     val searchState: StateFlow<DocxSearchState> = _searchState.asStateFlow()
 
+    private val _formattingAtCursor = MutableStateFlow(RunProperties())
+    val formattingAtCursor: StateFlow<RunProperties> = _formattingAtCursor.asStateFlow()
+
     sealed interface DocxEvent {
         data class ExportPdfReady(val message: String) : DocxEvent
         data class ExportPdfError(val message: String) : DocxEvent
@@ -99,6 +103,8 @@ class DocxViewerViewModel @Inject constructor(
     private var pageRenderer: DocxPageRenderer? = null
     private var documentUri: Uri? = null
     private var searchJob: Job? = null
+    private var editingSelectionStart: Int = 0
+    private var editingSelectionEnd: Int = 0
 
     /**
      * Precomputed plain text per element for fast search.
@@ -488,23 +494,39 @@ class DocxViewerViewModel @Inject constructor(
 
     fun startEditingElement(index: Int) {
         if (!_state.value.isEditing) return
+        editingSelectionStart = 0
+        editingSelectionEnd = 0
         _state.value = _state.value.copy(editingElementIndex = index)
+        updateFormattingAtCursor()
     }
 
     fun stopEditingElement() {
+        editingSelectionStart = 0
+        editingSelectionEnd = 0
         _state.value = _state.value.copy(editingElementIndex = -1)
+    }
+
+    fun updateEditingSelection(start: Int, end: Int) {
+        editingSelectionStart = start
+        editingSelectionEnd = end
+        updateFormattingAtCursor()
     }
 
     fun updateParagraphText(elementIndex: Int, newText: String) {
         val document = _state.value.document ?: return
         val element = document.body.getOrNull(elementIndex) as? DocxParagraph ?: return
 
+        // Skip if text hasn't changed (e.g., only cursor/selection moved)
+        if (element.text == newText) return
+
         // Rebuild runs: keep first run's properties, replace text
         val baseProps = element.runs.firstOrNull()?.properties ?: RunProperties()
         val newRuns = listOf(DocxRun(newText, baseProps))
 
         document.body[elementIndex] = element.copy(runs = newRuns)
-        _state.value = _state.value.copy(isDirty = true)
+        if (!_state.value.isDirty) {
+            _state.value = _state.value.copy(isDirty = true)
+        }
 
         // Update search text cache
         if (elementIndex < elementTexts.size) {
@@ -515,28 +537,105 @@ class DocxViewerViewModel @Inject constructor(
     }
 
     fun toggleBold(elementIndex: Int) {
-        toggleRunProperty(elementIndex) { it.copy(bold = !it.bold) }
+        applyFormattingToSelection(elementIndex) { it.copy(bold = !it.bold) }
     }
 
     fun toggleItalic(elementIndex: Int) {
-        toggleRunProperty(elementIndex) { it.copy(italic = !it.italic) }
+        applyFormattingToSelection(elementIndex) { it.copy(italic = !it.italic) }
     }
 
     fun toggleUnderline(elementIndex: Int) {
-        toggleRunProperty(elementIndex) { it.copy(underline = !it.underline) }
+        applyFormattingToSelection(elementIndex) { it.copy(underline = !it.underline) }
     }
 
-    private fun toggleRunProperty(elementIndex: Int, transform: (RunProperties) -> RunProperties) {
+    private fun applyFormattingToSelection(
+        elementIndex: Int,
+        transform: (RunProperties) -> RunProperties,
+    ) {
         val document = _state.value.document ?: return
         val element = document.body.getOrNull(elementIndex) as? DocxParagraph ?: return
 
-        val newRuns = element.runs.map { run ->
-            run.copy(properties = transform(run.properties))
+        val selStart = editingSelectionStart
+        val selEnd = editingSelectionEnd
+
+        val newRuns = if (selStart == selEnd) {
+            // No selection — apply to all runs
+            element.runs.map { run -> run.copy(properties = transform(run.properties)) }
+        } else {
+            splitAndTransformRuns(element.runs, selStart, selEnd, transform)
         }
-        document.body[elementIndex] = element.copy(runs = newRuns)
-        _state.value = _state.value.copy(isDirty = true)
-        // Force recomposition by bumping the document reference
-        _state.value = _state.value.copy(document = document.copy())
+
+        val newBody = document.body.toMutableList()
+        newBody[elementIndex] = element.copy(runs = newRuns)
+        _state.value = _state.value.copy(
+            isDirty = true,
+            document = document.copy(body = newBody),
+            formattingVersion = _state.value.formattingVersion + 1,
+        )
+        updateFormattingAtCursor()
+    }
+
+    private fun splitAndTransformRuns(
+        runs: List<DocxRun>,
+        selStart: Int,
+        selEnd: Int,
+        transform: (RunProperties) -> RunProperties,
+    ): List<DocxRun> {
+        val result = mutableListOf<DocxRun>()
+        var textPos = 0
+
+        for (run in runs) {
+            if (run.isPageBreak) {
+                result.add(run)
+                continue
+            }
+
+            val runText = if (run.isBreak) "\n" else run.text
+            val runStart = textPos
+            val runEnd = textPos + runText.length
+            textPos = runEnd
+
+            when {
+                runEnd <= selStart || runStart >= selEnd -> result.add(run)
+                runStart >= selStart && runEnd <= selEnd ->
+                    result.add(run.copy(properties = transform(run.properties)))
+                else -> {
+                    val splitStart = (selStart - runStart).coerceAtLeast(0)
+                    val splitEnd = (selEnd - runStart).coerceAtMost(runText.length)
+                    if (splitStart > 0) {
+                        result.add(DocxRun(runText.substring(0, splitStart), run.properties))
+                    }
+                    result.add(DocxRun(
+                        runText.substring(splitStart, splitEnd),
+                        transform(run.properties),
+                    ))
+                    if (splitEnd < runText.length) {
+                        result.add(DocxRun(runText.substring(splitEnd), run.properties))
+                    }
+                }
+            }
+        }
+
+        return result
+    }
+
+    private fun updateFormattingAtCursor() {
+        val document = _state.value.document ?: return
+        val element = document.body.getOrNull(_state.value.editingElementIndex) as? DocxParagraph ?: return
+
+        val pos = editingSelectionStart
+        var textPos = 0
+        for (run in element.runs) {
+            if (run.isPageBreak) continue
+            val runText = if (run.isBreak) "\n" else run.text
+            val runEnd = textPos + runText.length
+            if (pos < runEnd) {
+                _formattingAtCursor.value = run.properties
+                return
+            }
+            textPos = runEnd
+        }
+        _formattingAtCursor.value = element.runs.lastOrNull()?.properties ?: RunProperties()
     }
 
     fun saveDocument() {

@@ -110,6 +110,7 @@ fun DocxViewerScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val searchState by viewModel.searchState.collectAsStateWithLifecycle()
     val autoPageBreaks by viewModel.autoPageBreaks.collectAsStateWithLifecycle()
+    val formattingAtCursor by viewModel.formattingAtCursor.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
     // SAF launcher for "Save As PDF"
@@ -247,13 +248,10 @@ fun DocxViewerScreen(
             )
 
             if (state.isEditing && state.editingElementIndex >= 0) {
-                val editingPara = state.document?.body?.getOrNull(state.editingElementIndex) as? DocxParagraph
-                val runProps = editingPara?.runs?.firstOrNull()?.properties
-
                 FormattingToolbar(
-                    isBold = runProps?.bold == true,
-                    isItalic = runProps?.italic == true,
-                    isUnderline = runProps?.underline == true,
+                    isBold = formattingAtCursor.bold,
+                    isItalic = formattingAtCursor.italic,
+                    isUnderline = formattingAtCursor.underline,
                     onBoldClick = { viewModel.toggleBold(state.editingElementIndex) },
                     onItalicClick = { viewModel.toggleItalic(state.editingElementIndex) },
                     onUnderlineClick = { viewModel.toggleUnderline(state.editingElementIndex) },
@@ -294,6 +292,7 @@ fun DocxViewerScreen(
                     isEditing = state.isEditing,
                     editingElementIndex = state.editingElementIndex,
                     autoPageBreaks = autoPageBreaks,
+                    formattingVersion = state.formattingVersion,
                 )
             }
         }
@@ -558,6 +557,7 @@ private fun DocxContent(
     isEditing: Boolean,
     editingElementIndex: Int,
     autoPageBreaks: Set<Int>,
+    formattingVersion: Int = 0,
 ) {
     val context = LocalContext.current
     val fontResolver = remember { FontResolver(context) }
@@ -629,6 +629,8 @@ private fun DocxContent(
                         isActivelyEditing = isThisEditing,
                         onTapToEdit = { viewModel.startEditingElement(index) },
                         onTextChanged = { newText -> viewModel.updateParagraphText(index, newText) },
+                        onSelectionChange = { start, end -> viewModel.updateEditingSelection(start, end) },
+                        formattingVersion = formattingVersion,
                     )
                 }
             }

@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -73,6 +74,8 @@ fun DocxElementRenderer(
     isActivelyEditing: Boolean = false,
     onTapToEdit: () -> Unit = {},
     onTextChanged: (String) -> Unit = {},
+    onSelectionChange: (Int, Int) -> Unit = { _, _ -> },
+    formattingVersion: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     when (element) {
@@ -88,6 +91,8 @@ fun DocxElementRenderer(
             isActivelyEditing = isActivelyEditing,
             onTapToEdit = onTapToEdit,
             onTextChanged = onTextChanged,
+            onSelectionChange = onSelectionChange,
+            formattingVersion = formattingVersion,
             modifier = modifier,
         )
         is DocxTable -> TableRenderer(
@@ -120,6 +125,8 @@ private fun ParagraphRenderer(
     isActivelyEditing: Boolean,
     onTapToEdit: () -> Unit,
     onTextChanged: (String) -> Unit,
+    onSelectionChange: (Int, Int) -> Unit,
+    formattingVersion: Int,
     modifier: Modifier = Modifier,
 ) {
     val props = paragraph.properties
@@ -168,10 +175,15 @@ private fun ParagraphRenderer(
             bottom = (props.spacingAfterPt * pageScale).dp,
         )
 
+    val baseFontFamily = fontResolver.resolve(
+        paragraph.runs.firstOrNull()?.properties?.fontName,
+    )
     val baseTextStyle = TextStyle(
         color = Color.Black,
         fontSize = scaledFontSize,
         fontWeight = if (isHeading) FontWeight.Bold else null,
+        fontFamily = baseFontFamily,
+        letterSpacing = 0.sp,
     )
 
     // Line height: use effectiveLineHeight scaled proportionally
@@ -181,29 +193,25 @@ private fun ParagraphRenderer(
         // Inline editing with per-run styling
         val focusRequester = remember { FocusRequester() }
 
-        val initialFieldValue = remember(paragraph.runs, pageScale) {
-            val annotated = buildAnnotatedString {
-                for (run in paragraph.runs) {
-                    if (run.isPageBreak) continue
-                    if (run.isBreak) { append("\n"); continue }
-                    val rp = run.properties
-                    val scaledSize = ((rp.fontSizeSp ?: 11f) * headingScale * pageScale).sp
-                    withStyle(SpanStyle(
-                        fontWeight = if (rp.bold || isHeading) FontWeight.Bold else null,
-                        fontStyle = if (rp.italic) FontStyle.Italic else null,
-                        textDecoration = buildTextDecoration(rp),
-                        fontSize = scaledSize,
-                        color = rp.color?.let { Color(it) } ?: Color.Black,
-                        fontFamily = fontResolver.resolve(rp.fontName),
-                    )) {
-                        append(run.text)
-                    }
-                }
-            }
-            TextFieldValue(annotated)
+        var fieldValue by remember {
+            mutableStateOf(
+                TextFieldValue(
+                    buildEditingAnnotatedString(paragraph, headingScale, pageScale, fontResolver, isHeading)
+                )
+            )
         }
 
-        var fieldValue by remember(paragraph.runs, pageScale) { mutableStateOf(initialFieldValue) }
+        // Update styling reactively when formatting changes, preserving cursor/selection
+        var lastFormattingVersion by remember { mutableIntStateOf(formattingVersion) }
+        LaunchedEffect(formattingVersion) {
+            if (formattingVersion != lastFormattingVersion) {
+                lastFormattingVersion = formattingVersion
+                val newAnnotated = buildEditingAnnotatedString(
+                    paragraph, headingScale, pageScale, fontResolver, isHeading,
+                )
+                fieldValue = fieldValue.copy(annotatedString = newAnnotated)
+            }
+        }
 
         val editStyle = baseTextStyle.merge(
             TextStyle(lineHeight = lineH, textAlign = textAlign)
@@ -220,8 +228,12 @@ private fun ParagraphRenderer(
             BasicTextField(
                 value = fieldValue,
                 onValueChange = { newValue ->
+                    val textChanged = newValue.text != fieldValue.text
                     fieldValue = newValue
-                    onTextChanged(newValue.text)
+                    onSelectionChange(newValue.selection.start, newValue.selection.end)
+                    if (textChanged) {
+                        onTextChanged(newValue.text)
+                    }
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -348,6 +360,33 @@ private fun buildTextDecoration(rp: RunProperties): TextDecoration? {
     if (rp.underline) decorations.add(TextDecoration.Underline)
     if (rp.strikethrough) decorations.add(TextDecoration.LineThrough)
     return if (decorations.isEmpty()) null else TextDecoration.combine(decorations)
+}
+
+private fun buildEditingAnnotatedString(
+    paragraph: DocxParagraph,
+    headingScale: Float,
+    pageScale: Float,
+    fontResolver: FontResolver,
+    isHeading: Boolean,
+): AnnotatedString {
+    return buildAnnotatedString {
+        for (run in paragraph.runs) {
+            if (run.isPageBreak) continue
+            if (run.isBreak) { append("\n"); continue }
+            val rp = run.properties
+            val scaledSize = ((rp.fontSizeSp ?: 11f) * headingScale * pageScale).sp
+            withStyle(SpanStyle(
+                fontWeight = if (rp.bold || isHeading) FontWeight.Bold else null,
+                fontStyle = if (rp.italic) FontStyle.Italic else null,
+                textDecoration = buildTextDecoration(rp),
+                fontSize = scaledSize,
+                color = rp.color?.let { Color(it) } ?: Color.Black,
+                fontFamily = fontResolver.resolve(rp.fontName),
+            )) {
+                append(run.text)
+            }
+        }
+    }
 }
 
 private fun buildListPrefix(
@@ -497,6 +536,8 @@ private fun TableRenderer(
                                     isActivelyEditing = false,
                                     onTapToEdit = {},
                                     onTextChanged = {},
+                                    onSelectionChange = { _, _ -> },
+                                    formattingVersion = 0,
                                 )
                             }
                         }
