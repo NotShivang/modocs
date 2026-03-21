@@ -7,7 +7,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTransformGestures
+import com.modocs.core.ui.components.ZoomableContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,7 +42,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -51,10 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -189,16 +185,6 @@ private fun SlideViewer(
     modifier: Modifier = Modifier,
 ) {
     var containerWidth by remember { mutableIntStateOf(0) }
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offsetX by remember { mutableFloatStateOf(0f) }
-    var offsetY by remember { mutableFloatStateOf(0f) }
-
-    // Reset zoom when slide changes
-    LaunchedEffect(currentSlide) {
-        scale = 1f
-        offsetX = 0f
-        offsetY = 0f
-    }
 
     val aspectRatio = document.slideWidth.toFloat() / document.slideHeight.toFloat()
 
@@ -211,24 +197,13 @@ private fun SlideViewer(
         }
     }
 
-    Box(
+    ZoomableContainer(
         modifier = modifier
             .fillMaxSize()
             .background(SlideCanvasBackground)
-            .onSizeChanged { containerWidth = it.width }
-            .pointerInput(currentSlide) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    scale = (scale * zoom).coerceIn(1f, 5f)
-                    if (scale > 1f) {
-                        offsetX += pan.x
-                        offsetY += pan.y
-                    } else {
-                        offsetX = 0f
-                        offsetY = 0f
-                    }
-                }
-            },
-        contentAlignment = Alignment.Center,
+            .onSizeChanged { containerWidth = it.width },
+        maxScale = 5f,
+        contentModifier = Modifier.fillMaxSize(),
     ) {
         val bitmap = slideBitmap
         if (bitmap != null) {
@@ -236,19 +211,16 @@ private fun SlideViewer(
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = "Slide ${currentSlide + 1}",
                 modifier = Modifier
+                    .align(Alignment.Center)
                     .fillMaxWidth()
                     .padding(16.dp)
-                    .aspectRatio(aspectRatio)
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = offsetX
-                        translationY = offsetY
-                    },
+                    .aspectRatio(aspectRatio),
                 contentScale = ContentScale.Fit,
             )
         } else if (containerWidth > 0) {
-            LoadingIndicator()
+            Box(modifier = Modifier.align(Alignment.Center)) {
+                LoadingIndicator()
+            }
         }
     }
 }

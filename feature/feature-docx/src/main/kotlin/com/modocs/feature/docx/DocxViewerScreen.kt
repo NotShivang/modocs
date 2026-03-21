@@ -10,7 +10,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTransformGestures
+import com.modocs.core.ui.components.ZoomableContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -63,7 +63,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -78,9 +77,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
@@ -430,31 +427,10 @@ private fun DocxPagesContent(
             .collect { viewModel.updateCurrentPage(it) }
     }
 
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offsetX by remember { mutableFloatStateOf(0f) }
-    var offsetY by remember { mutableFloatStateOf(0f) }
-
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    val newScale = (scale * zoom).coerceIn(1f, 4f)
-                    scale = newScale
-
-                    if (newScale > 1f) {
-                        offsetX += pan.x
-                        offsetY += pan.y
-                        val maxX = (size.width * (newScale - 1f)) / 2f
-                        val maxY = (size.height * (newScale - 1f)) / 2f
-                        offsetX = offsetX.coerceIn(-maxX, maxX)
-                        offsetY = offsetY.coerceIn(-maxY, maxY)
-                    } else {
-                        offsetX = 0f
-                        offsetY = 0f
-                    }
-                }
-            },
+    ZoomableContainer(
+        modifier = modifier.fillMaxSize(),
+        maxScale = 4f,
+        contentModifier = Modifier.fillMaxSize(),
     ) {
         val highlightVersion = remember(searchState.currentMatchIndex, searchState.matches.size) {
             searchState.currentMatchIndex to searchState.matches.size
@@ -462,14 +438,7 @@ private fun DocxPagesContent(
 
         LazyColumn(
             state = listState,
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    translationX = offsetX
-                    translationY = offsetY
-                },
+            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -604,42 +573,15 @@ private fun DocxContent(
     val marginRightDp = (pageSetup.marginRightPt * pageScale).dp
     val marginTopDp = (pageSetup.marginTopPt * pageScale).dp
 
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offsetX by remember { mutableFloatStateOf(0f) }
-    var offsetY by remember { mutableFloatStateOf(0f) }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    val newScale = (scale * zoom).coerceIn(1f, 4f)
-                    scale = newScale
-
-                    if (newScale > 1f) {
-                        offsetX += pan.x
-                        offsetY += pan.y
-                        val maxX = (size.width * (newScale - 1f)) / 2f
-                        val maxY = (size.height * (newScale - 1f)) / 2f
-                        offsetX = offsetX.coerceIn(-maxX, maxX)
-                        offsetY = offsetY.coerceIn(-maxY, maxY)
-                    } else {
-                        offsetX = 0f
-                        offsetY = 0f
-                    }
-                }
-            },
+    ZoomableContainer(
+        modifier = Modifier.fillMaxSize(),
+        maxScale = 4f,
+        contentModifier = Modifier.fillMaxSize(),
     ) {
     LazyColumn(
         state = listState,
         modifier = Modifier
             .fillMaxSize()
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-                translationX = offsetX
-                translationY = offsetY
-            }
             .background(Color.White),
         contentPadding = PaddingValues(
             start = marginLeftDp,
