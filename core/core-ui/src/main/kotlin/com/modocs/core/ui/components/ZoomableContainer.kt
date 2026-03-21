@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -81,6 +82,7 @@ fun ZoomableContainer(
 
     Box(
         modifier = modifier
+            .clipToBounds()
             .onSizeChanged {
                 containerWidth = it.width
                 containerHeight = it.height
