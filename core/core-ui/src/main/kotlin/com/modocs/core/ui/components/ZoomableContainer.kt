@@ -32,6 +32,8 @@ import androidx.compose.ui.layout.onSizeChanged
  *
  * @param modifier Modifier for the outer container.
  * @param enabled Whether zoom gestures are active.
+ * @param scrollLocked When true, all scroll and pan gestures are frozen. Useful when
+ *   child content handles its own drag (e.g. dragging annotations).
  * @param minScale Minimum zoom scale (default 1f).
  * @param maxScale Maximum zoom scale (default 4f).
  * @param contentModifier A modifier applied to the inner content wrapper that includes
@@ -42,6 +44,7 @@ import androidx.compose.ui.layout.onSizeChanged
 fun ZoomableContainer(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    scrollLocked: Boolean = false,
     minScale: Float = 1f,
     maxScale: Float = 4f,
     contentModifier: Modifier = Modifier,
@@ -60,6 +63,10 @@ fun ZoomableContainer(
     val nestedScrollConnection = remember {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                // When scroll is locked (e.g. during annotation drag), consume
+                // everything so the LazyColumn doesn't scroll.
+                if (scrollLocked) return available
+
                 if (scale <= minScale) return Offset.Zero
 
                 val maxX = maxOffsetX()
@@ -91,13 +98,15 @@ fun ZoomableContainer(
                 if (enabled) {
                     Modifier
                         .nestedScroll(nestedScrollConnection)
-                        .pointerInput(Unit) {
+                        .pointerInput(scrollLocked) {
                             awaitEachGesture {
                                 awaitFirstDown(requireUnconsumed = false)
                                 do {
                                     val event = awaitPointerEvent()
 
-                                    if (event.changes.size >= 2) {
+                                    if (scrollLocked) {
+                                        // Don't handle any zoom/pan while dragging annotations
+                                    } else if (event.changes.size >= 2) {
                                         // Multi-touch: handle zoom + pan in both axes
                                         val zoomChange = event.calculateZoom()
                                         val panChange = event.calculatePan()

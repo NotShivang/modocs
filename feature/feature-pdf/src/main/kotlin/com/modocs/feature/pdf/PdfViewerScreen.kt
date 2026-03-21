@@ -646,9 +646,12 @@ private fun PdfPagesContent(
             .collect { viewModel.updateCurrentPage(it) }
     }
 
+    var isDraggingAnnotation by remember { mutableStateOf(false) }
+
     ZoomableContainer(
         modifier = modifier.fillMaxSize(),
         enabled = true,
+        scrollLocked = isDraggingAnnotation,
         maxScale = 4f,
         contentModifier = Modifier.fillMaxSize(),
     ) {
@@ -675,6 +678,8 @@ private fun PdfPagesContent(
                     onPageTap = { normX, normY, widthPx, heightPx ->
                         viewModel.onPageTap(pageIndex, normX, normY, widthPx, heightPx)
                     },
+                    onDragStart = { isDraggingAnnotation = true },
+                    onDragEnd = { isDraggingAnnotation = false },
                     onAnnotationDrag = { id, normX, normY ->
                         viewModel.moveAnnotation(id, normX, normY)
                     },
@@ -694,6 +699,8 @@ private fun PdfPage(
     annotations: List<PdfAnnotation>,
     selectedAnnotationId: String?,
     onPageTap: (normalizedX: Float, normalizedY: Float, widthPx: Float, heightPx: Float) -> Unit,
+    onDragStart: () -> Unit,
+    onDragEnd: () -> Unit,
     onAnnotationDrag: (id: String, newNormX: Float, newNormY: Float) -> Unit,
 ) {
     val configuration = LocalConfiguration.current
@@ -740,7 +747,11 @@ private fun PdfPage(
                     if (fillSignActive && selectedAnnotationId != null &&
                         annotations.any { it.id == selectedAnnotationId }) {
                         Modifier.pointerInput(selectedAnnotationId) {
-                            detectDragGestures { change, _ ->
+                            detectDragGestures(
+                                onDragStart = { onDragStart() },
+                                onDragEnd = { onDragEnd() },
+                                onDragCancel = { onDragEnd() },
+                            ) { change, _ ->
                                 change.consume()
                                 if (composableWidth > 0) {
                                     val aspectRatio = bmp.height.toFloat() / bmp.width.toFloat()
