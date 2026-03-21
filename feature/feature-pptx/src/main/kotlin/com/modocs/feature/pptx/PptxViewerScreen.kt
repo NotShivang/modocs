@@ -204,7 +204,7 @@ private fun SlideViewer(
             .onSizeChanged { containerWidth = it.width },
         maxScale = 5f,
         contentModifier = Modifier.fillMaxSize(),
-    ) {
+    ) { _ ->
         val bitmap = slideBitmap
         if (bitmap != null) {
             Image(

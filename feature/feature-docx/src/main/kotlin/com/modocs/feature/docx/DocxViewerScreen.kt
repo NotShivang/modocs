@@ -431,7 +431,7 @@ private fun DocxPagesContent(
         modifier = modifier.fillMaxSize(),
         maxScale = 4f,
         contentModifier = Modifier.fillMaxSize(),
-    ) {
+    ) { _ ->
         val highlightVersion = remember(searchState.currentMatchIndex, searchState.matches.size) {
             searchState.currentMatchIndex to searchState.matches.size
         }
@@ -568,62 +568,67 @@ private fun DocxContent(
     val screenWidthDp = configuration.screenWidthDp.toFloat()
     val pageScale = screenWidthDp / pageSetup.pageWidthPt
 
-    // Scale page margins proportionally
-    val marginLeftDp = (pageSetup.marginLeftPt * pageScale).dp
-    val marginRightDp = (pageSetup.marginRightPt * pageScale).dp
-    val marginTopDp = (pageSetup.marginTopPt * pageScale).dp
-
     ZoomableContainer(
         modifier = Modifier.fillMaxSize(),
+        applyTransform = false,
         maxScale = 4f,
         contentModifier = Modifier.fillMaxSize(),
-    ) {
-    LazyColumn(
-        state = listState,
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.White),
-        contentPadding = PaddingValues(
-            start = marginLeftDp,
-            end = marginRightDp,
-            top = marginTopDp,
-            bottom = 12.dp,
-        ),
-        verticalArrangement = Arrangement.spacedBy(0.dp),
-    ) {
-        itemsIndexed(
-            items = document.body,
-            key = { index, _ -> index },
-        ) { index, element ->
-            // Show auto page break indicator before this element
-            if (index in autoPageBreaks) {
-                AutoPageBreakIndicator(pageNumber = computePageNumber(index, autoPageBreaks))
+    ) { zoomScale ->
+        // Layout-level zoom: multiply pageScale by zoom so fonts, spacing,
+        // and margins all scale proportionally. This keeps the input coordinate
+        // system aligned with the visual rendering (critical for cursor/handle
+        // positioning in BasicTextField).
+        val effectivePageScale = pageScale * zoomScale
+        val zoomedMarginLeft = (pageSetup.marginLeftPt * effectivePageScale).dp
+        val zoomedMarginRight = (pageSetup.marginRightPt * effectivePageScale).dp
+        val zoomedMarginTop = (pageSetup.marginTopPt * effectivePageScale).dp
+
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.White),
+            contentPadding = PaddingValues(
+                start = zoomedMarginLeft,
+                end = zoomedMarginRight,
+                top = zoomedMarginTop,
+                bottom = (12 * zoomScale).dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
+        ) {
+            itemsIndexed(
+                items = document.body,
+                key = { index, _ -> index },
+            ) { index, element ->
+                // Show auto page break indicator before this element
+                if (index in autoPageBreaks) {
+                    AutoPageBreakIndicator(pageNumber = computePageNumber(index, autoPageBreaks))
+                }
+
+                // Get search highlights for this element
+                val highlights = viewModel.getHighlightsForElement(index)
+                val highlightRanges = highlights.map { it.first }
+                val currentGlobalIndex = searchState.currentMatchIndex
+
+                // Find which local highlight index corresponds to the current global match
+                val currentLocalIndex = highlights.indexOfFirst { it.second == currentGlobalIndex }
+
+                val isThisEditing = isEditing && editingElementIndex == index
+
+                DocxElementRenderer(
+                    element = element,
+                    document = document,
+                    fontResolver = fontResolver,
+                    pageScale = effectivePageScale,
+                    searchHighlights = highlightRanges,
+                    currentHighlightIndex = currentLocalIndex,
+                    isEditing = isEditing,
+                    isActivelyEditing = isThisEditing,
+                    onTapToEdit = { viewModel.startEditingElement(index) },
+                    onTextChanged = { newText -> viewModel.updateParagraphText(index, newText) },
+                )
             }
-
-            // Get search highlights for this element
-            val highlights = viewModel.getHighlightsForElement(index)
-            val highlightRanges = highlights.map { it.first }
-            val currentGlobalIndex = searchState.currentMatchIndex
-
-            // Find which local highlight index corresponds to the current global match
-            val currentLocalIndex = highlights.indexOfFirst { it.second == currentGlobalIndex }
-
-            val isThisEditing = isEditing && editingElementIndex == index
-
-            DocxElementRenderer(
-                element = element,
-                document = document,
-                fontResolver = fontResolver,
-                pageScale = pageScale,
-                searchHighlights = highlightRanges,
-                currentHighlightIndex = currentLocalIndex,
-                isEditing = isEditing,
-                isActivelyEditing = isThisEditing,
-                onTapToEdit = { viewModel.startEditingElement(index) },
-                onTextChanged = { newText -> viewModel.updateParagraphText(index, newText) },
-            )
         }
-    }
     }
 }
 

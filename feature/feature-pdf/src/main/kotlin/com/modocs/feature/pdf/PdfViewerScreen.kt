@@ -654,7 +654,7 @@ private fun PdfPagesContent(
         scrollLocked = isDraggingAnnotation,
         maxScale = 4f,
         contentModifier = Modifier.fillMaxSize(),
-    ) {
+    ) { _ ->
         val highlightVersion = remember(searchState.currentMatchIndex, searchState.matches.size) {
             searchState.currentMatchIndex to searchState.matches.size
         }

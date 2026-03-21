@@ -25,30 +25,39 @@ import androidx.compose.ui.layout.onSizeChanged
 /**
  * A container that supports pinch-to-zoom while preserving inner scroll behavior.
  *
- * Pinch (multi-touch) gestures control zoom and pan. Single-finger gestures pass
- * through to child scrollable content (e.g. LazyColumn). When zoomed in, single-finger
- * scrolls are first consumed for panning within the zoom bounds, with any overflow
- * delegated to the child scroll container.
+ * Operates in two modes controlled by [applyTransform]:
+ *
+ * - **true (default):** Zoom is applied via graphicsLayer (visual-only scaling).
+ *   Best for bitmap/image content where the coordinate system doesn't matter.
+ *   Panning is handled via translation offsets.
+ *
+ * - **false:** No graphicsLayer transform is applied. The current zoom scale is
+ *   passed to [content] so callers can apply it to layout dimensions (font sizes,
+ *   padding, etc.) for true layout-level zoom. This keeps the input coordinate
+ *   system aligned with the visual rendering, which is required for interactive
+ *   elements like BasicTextField. Panning is not needed since the child
+ *   scroll container handles scrolling at the zoomed dimensions naturally.
  *
  * @param modifier Modifier for the outer container.
  * @param enabled Whether zoom gestures are active.
- * @param scrollLocked When true, all scroll and pan gestures are frozen. Useful when
- *   child content handles its own drag (e.g. dragging annotations).
+ * @param scrollLocked When true, all scroll and pan gestures are frozen.
+ * @param applyTransform When true, zoom is applied via graphicsLayer. When false,
+ *   the scale is passed to content for layout-level zoom.
  * @param minScale Minimum zoom scale (default 1f).
  * @param maxScale Maximum zoom scale (default 4f).
- * @param contentModifier A modifier applied to the inner content wrapper that includes
- *   the graphicsLayer transform. Callers can chain additional modifiers onto this.
- * @param content The scrollable content (e.g. LazyColumn).
+ * @param contentModifier A modifier applied to the inner content wrapper.
+ * @param content The scrollable content. Receives the current zoom scale.
  */
 @Composable
 fun ZoomableContainer(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     scrollLocked: Boolean = false,
+    applyTransform: Boolean = true,
     minScale: Float = 1f,
     maxScale: Float = 4f,
     contentModifier: Modifier = Modifier,
-    content: @Composable BoxScope.() -> Unit,
+    content: @Composable BoxScope.(zoomScale: Float) -> Unit,
 ) {
     var scale by remember { mutableFloatStateOf(minScale) }
     var offsetX by remember { mutableFloatStateOf(0f) }
@@ -59,25 +68,23 @@ fun ZoomableContainer(
     fun maxOffsetX(): Float = (containerWidth * (scale - 1f)) / 2f
     fun maxOffsetY(): Float = (containerHeight * (scale - 1f)) / 2f
 
-    // When zoomed, intercept single-finger scroll for panning; overflow goes to child.
     val nestedScrollConnection = remember {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                // When scroll is locked (e.g. during annotation drag), consume
-                // everything so the LazyColumn doesn't scroll.
                 if (scrollLocked) return available
+
+                // In layout-zoom mode, let the child scroll container handle everything
+                if (!applyTransform) return Offset.Zero
 
                 if (scale <= minScale) return Offset.Zero
 
                 val maxX = maxOffsetX()
                 val maxY = maxOffsetY()
 
-                // Consume horizontal scroll for panning
                 val newOffsetX = (offsetX + available.x).coerceIn(-maxX, maxX)
                 val consumedX = newOffsetX - offsetX
                 offsetX = newOffsetX
 
-                // Consume vertical scroll for panning within bounds
                 val newOffsetY = (offsetY + available.y).coerceIn(-maxY, maxY)
                 val consumedY = newOffsetY - offsetY
                 offsetY = newOffsetY
@@ -98,7 +105,7 @@ fun ZoomableContainer(
                 if (enabled) {
                     Modifier
                         .nestedScroll(nestedScrollConnection)
-                        .pointerInput(scrollLocked) {
+                        .pointerInput(scrollLocked, applyTransform) {
                             awaitEachGesture {
                                 awaitFirstDown(requireUnconsumed = false)
                                 do {
@@ -107,7 +114,6 @@ fun ZoomableContainer(
                                     if (scrollLocked) {
                                         // Don't handle any zoom/pan while dragging annotations
                                     } else if (event.changes.size >= 2) {
-                                        // Multi-touch: handle zoom + pan in both axes
                                         val zoomChange = event.calculateZoom()
                                         val panChange = event.calculatePan()
 
@@ -115,31 +121,32 @@ fun ZoomableContainer(
                                             (scale * zoomChange).coerceIn(minScale, maxScale)
                                         scale = newScale
 
-                                        if (newScale > minScale) {
-                                            offsetX += panChange.x
-                                            offsetY += panChange.y
-                                            offsetX =
-                                                offsetX.coerceIn(-maxOffsetX(), maxOffsetX())
-                                            offsetY =
-                                                offsetY.coerceIn(-maxOffsetY(), maxOffsetY())
-                                        } else {
-                                            offsetX = 0f
-                                            offsetY = 0f
+                                        if (applyTransform) {
+                                            // graphicsLayer mode: manage offsets
+                                            if (newScale > minScale) {
+                                                offsetX += panChange.x
+                                                offsetY += panChange.y
+                                                offsetX =
+                                                    offsetX.coerceIn(-maxOffsetX(), maxOffsetX())
+                                                offsetY =
+                                                    offsetY.coerceIn(-maxOffsetY(), maxOffsetY())
+                                            } else {
+                                                offsetX = 0f
+                                                offsetY = 0f
+                                            }
                                         }
 
                                         event.changes.forEach { it.consume() }
-                                    } else if (scale > minScale && event.changes.size == 1) {
-                                        // Single-finger when zoomed: handle horizontal pan here
-                                        // (LazyColumn only scrolls vertically, so horizontal
-                                        // drag never reaches the NestedScrollConnection)
+                                    } else if (applyTransform && scale > minScale &&
+                                        event.changes.size == 1
+                                    ) {
+                                        // Single-finger horizontal pan (graphicsLayer mode only)
                                         val change = event.changes[0]
                                         val dragX = change.position.x - change.previousPosition.x
                                         if (dragX != 0f) {
                                             offsetX = (offsetX + dragX)
                                                 .coerceIn(-maxOffsetX(), maxOffsetX())
                                         }
-                                        // Don't consume — vertical component still flows
-                                        // to LazyColumn via nestedScroll
                                     }
                                 } while (event.changes.any { it.pressed })
                             }
@@ -151,13 +158,20 @@ fun ZoomableContainer(
     ) {
         Box(
             modifier = contentModifier
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    translationX = offsetX
-                    translationY = offsetY
-                },
-            content = content,
-        )
+                .then(
+                    if (applyTransform) {
+                        Modifier.graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                            translationX = offsetX
+                            translationY = offsetY
+                        }
+                    } else {
+                        Modifier
+                    },
+                ),
+        ) {
+            content(scale)
+        }
     }
 }
