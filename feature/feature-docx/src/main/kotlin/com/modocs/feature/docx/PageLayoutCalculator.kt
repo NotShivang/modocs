@@ -331,6 +331,8 @@ class PageLayoutCalculator(private val context: Context) {
             typeface = resolveTypeface(props.fontName, props.bold, props.italic)
             color = props.color ?: android.graphics.Color.BLACK
             isAntiAlias = true
+            isLinearText = true
+            isSubpixelText = true
             isUnderlineText = props.underline
             isStrikeThruText = props.strikethrough
         }
