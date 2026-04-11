@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.modocs.core.common.OoxmlDecryptor
 import javax.inject.Inject
 
 enum class DocxViewMode { CANVAS, COMPOSE }
@@ -33,6 +34,8 @@ data class DocxViewerState(
     val pageCount: Int = 0,
     val currentPage: Int = 0,
     val formattingVersion: Int = 0,
+    val isPasswordRequired: Boolean = false,
+    val passwordError: String? = null,
 )
 
 data class DocxSearchState(
@@ -131,49 +134,23 @@ class DocxViewerViewModel @Inject constructor(
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true, errorMessage = null)
 
-            try {
-                val document = DocxParser.parse(context, uri)
+            val name = displayName
+                ?: resolveFileName(uri)
+                ?: "Document"
 
-                val name = displayName
-                    ?: resolveFileName(uri)
-                    ?: "Document"
-
-                // Precompute text for search
-                val texts = document.body.map { element ->
-                    when (element) {
-                        is DocxParagraph -> element.text
-                        is DocxTable -> element.rows.joinToString(" ") { row ->
-                            row.cells.joinToString(" ") { cell ->
-                                cell.paragraphs.joinToString(" ") { it.text }
-                            }
-                        }
-                        is DocxImage -> element.altText
-                    }
-                }
-                elementTexts = texts
-
-                var offset = 0
-                val offsets = mutableListOf<Int>()
-                for (text in texts) {
-                    offsets.add(offset)
-                    offset += text.length + 1 // +1 for separator
-                }
-                elementOffsets = offsets
-
-                // Compute automatic page break positions using real font metrics
-                _autoPageBreaks.value = layoutCalculator.computeAutoPageBreaks(document)
-
-                // Prepare bitmap page renderer for CANVAS view mode
-                val renderer = DocxPageRenderer(context)
-                renderer.prepare(document)
-                pageRenderer = renderer
-
+            // Check if file is password-protected (OLE2 container)
+            if (OoxmlDecryptor.isOle2File(context, uri)) {
                 _state.value = _state.value.copy(
                     isLoading = false,
+                    isPasswordRequired = true,
                     fileName = name,
-                    document = document,
-                    pageCount = renderer.pageCount,
                 )
+                return@launch
+            }
+
+            try {
+                val document = DocxParser.parse(context, uri)
+                onDocumentLoaded(document, name)
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     isLoading = false,
@@ -181,6 +158,85 @@ class DocxViewerViewModel @Inject constructor(
                 )
             }
         }
+    }
+
+    fun submitPassword(password: String) {
+        val uri = documentUri ?: return
+
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true, passwordError = null)
+
+            when (val result = OoxmlDecryptor.decrypt(context, uri, password)) {
+                is OoxmlDecryptor.DecryptResult.Success -> {
+                    try {
+                        val document = DocxParser.parse(result.inputStream)
+                        _state.value = _state.value.copy(
+                            isPasswordRequired = false,
+                            passwordError = null,
+                        )
+                        onDocumentLoaded(document, _state.value.fileName)
+                    } catch (e: Exception) {
+                        _state.value = _state.value.copy(
+                            isLoading = false,
+                            isPasswordRequired = false,
+                            errorMessage = "Failed to open document: ${e.message ?: "Unknown error"}",
+                        )
+                    }
+                }
+                is OoxmlDecryptor.DecryptResult.WrongPassword -> {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        passwordError = "Incorrect password",
+                    )
+                }
+                is OoxmlDecryptor.DecryptResult.Failed -> {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        isPasswordRequired = false,
+                        errorMessage = "Failed to decrypt: ${result.message}",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun onDocumentLoaded(document: DocxDocument, name: String) {
+        // Precompute text for search
+        val texts = document.body.map { element ->
+            when (element) {
+                is DocxParagraph -> element.text
+                is DocxTable -> element.rows.joinToString(" ") { row ->
+                    row.cells.joinToString(" ") { cell ->
+                        cell.paragraphs.joinToString(" ") { it.text }
+                    }
+                }
+                is DocxImage -> element.altText
+            }
+        }
+        elementTexts = texts
+
+        var offset = 0
+        val offsets = mutableListOf<Int>()
+        for (text in texts) {
+            offsets.add(offset)
+            offset += text.length + 1 // +1 for separator
+        }
+        elementOffsets = offsets
+
+        // Compute automatic page break positions using real font metrics
+        _autoPageBreaks.value = layoutCalculator.computeAutoPageBreaks(document)
+
+        // Prepare bitmap page renderer for CANVAS view mode
+        val renderer = DocxPageRenderer(context)
+        renderer.prepare(document)
+        pageRenderer = renderer
+
+        _state.value = _state.value.copy(
+            isLoading = false,
+            fileName = name,
+            document = document,
+            pageCount = renderer.pageCount,
+        )
     }
 
     // --- Export to PDF ---

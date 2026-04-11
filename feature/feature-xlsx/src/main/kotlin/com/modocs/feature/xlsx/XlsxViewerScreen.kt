@@ -119,6 +119,16 @@ fun XlsxViewerScreen(
         viewModel.loadXlsx(uri, displayName)
     }
 
+    // Password dialog
+    if (state.isPasswordRequired) {
+        com.modocs.core.ui.components.PasswordDialog(
+            onPasswordSubmit = { password -> viewModel.submitPassword(password) },
+            onDismiss = onNavigateBack,
+            isLoading = state.isLoading,
+            errorMessage = state.passwordError,
+        )
+    }
+
     // Save-As launcher
     val saveAsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),

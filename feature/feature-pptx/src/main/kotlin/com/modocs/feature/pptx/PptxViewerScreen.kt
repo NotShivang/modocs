@@ -81,6 +81,16 @@ fun PptxViewerScreen(
         viewModel.loadPptx(uri, displayName)
     }
 
+    // Password dialog
+    if (state.isPasswordRequired) {
+        com.modocs.core.ui.components.PasswordDialog(
+            onPasswordSubmit = { password -> viewModel.submitPassword(password) },
+            onDismiss = onNavigateBack,
+            isLoading = state.isLoading,
+            errorMessage = state.passwordError,
+        )
+    }
+
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
 
     Scaffold(

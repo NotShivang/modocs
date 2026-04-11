@@ -33,6 +33,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import com.modocs.core.common.OoxmlDecryptor
 import javax.inject.Inject
 
 data class PptxViewerState(
@@ -42,6 +43,8 @@ data class PptxViewerState(
     val document: PptxDocument? = null,
     val currentSlide: Int = 0,
     val slideCount: Int = 0,
+    val isPasswordRequired: Boolean = false,
+    val passwordError: String? = null,
 )
 
 data class PptxSearchState(
@@ -82,19 +85,32 @@ class PptxViewerViewModel @Inject constructor(
     val events = _events.asSharedFlow()
 
     private var searchJob: Job? = null
+    private var documentUri: Uri? = null
     private val slideBitmapCache = mutableMapOf<Int, Bitmap>()
     private val renderMutex = Mutex()
 
     fun loadPptx(uri: Uri, displayName: String?) {
         if (_state.value.document != null) return
 
+        documentUri = uri
+
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true, errorMessage = null)
 
+            val name = displayName ?: resolveFileName(uri) ?: "Presentation"
+
+            // Check if file is password-protected (OLE2 container)
+            if (OoxmlDecryptor.isOle2File(context, uri)) {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    isPasswordRequired = true,
+                    fileName = name,
+                )
+                return@launch
+            }
+
             try {
                 val document = PptxParser.parse(context, uri)
-                val name = displayName ?: resolveFileName(uri) ?: "Presentation"
-
                 _state.value = _state.value.copy(
                     isLoading = false,
                     fileName = name,
@@ -106,6 +122,48 @@ class PptxViewerViewModel @Inject constructor(
                     isLoading = false,
                     errorMessage = "Failed to open presentation: ${e.message ?: "Unknown error"}",
                 )
+            }
+        }
+    }
+
+    fun submitPassword(password: String) {
+        val uri = documentUri ?: return
+
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true, passwordError = null)
+
+            when (val result = OoxmlDecryptor.decrypt(context, uri, password)) {
+                is OoxmlDecryptor.DecryptResult.Success -> {
+                    try {
+                        val document = PptxParser.parse(result.inputStream)
+                        _state.value = _state.value.copy(
+                            isLoading = false,
+                            isPasswordRequired = false,
+                            passwordError = null,
+                            document = document,
+                            slideCount = document.slides.size,
+                        )
+                    } catch (e: Exception) {
+                        _state.value = _state.value.copy(
+                            isLoading = false,
+                            isPasswordRequired = false,
+                            errorMessage = "Failed to open presentation: ${e.message ?: "Unknown error"}",
+                        )
+                    }
+                }
+                is OoxmlDecryptor.DecryptResult.WrongPassword -> {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        passwordError = "Incorrect password",
+                    )
+                }
+                is OoxmlDecryptor.DecryptResult.Failed -> {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        isPasswordRequired = false,
+                        errorMessage = "Failed to decrypt: ${result.message}",
+                    )
+                }
             }
         }
     }

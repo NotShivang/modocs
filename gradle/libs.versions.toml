@@ -15,6 +15,8 @@ coil = "3.1.0"
 core-ktx = "1.15.0"
 activity-compose = "1.9.3"
 appcompat = "1.7.0"
+pdfbox-android = "2.0.27.0"
+poi = "5.2.5"
 
 # Testing
 junit = "4.13.2"
@@ -23,6 +25,11 @@ turbine = "1.2.0"
 compose-ui-test = "1.7.6"
 
 [libraries]
+# Document decryption
+pdfbox-android = { group = "com.tom-roush", name = "pdfbox-android", version.ref = "pdfbox-android" }
+poi = { group = "org.apache.poi", name = "poi", version.ref = "poi" }
+poi-ooxml-lite = { group = "org.apache.poi", name = "poi-ooxml-lite", version.ref = "poi" }
+
 # AndroidX Core
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }

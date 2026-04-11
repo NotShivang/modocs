@@ -148,6 +148,16 @@ fun PdfViewerScreen(
         }
     }
 
+    // Password dialog
+    if (state.isPasswordRequired) {
+        com.modocs.core.ui.components.PasswordDialog(
+            onPasswordSubmit = { password -> viewModel.submitPassword(password) },
+            onDismiss = onNavigateBack,
+            isLoading = state.isLoading,
+            errorMessage = state.passwordError,
+        )
+    }
+
     // Signature pad dialog
     if (fillSignState.showSignaturePad) {
         SignaturePadDialog(

@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.modocs.core.common.OoxmlDecryptor
 import javax.inject.Inject
 
 data class XlsxViewerState(
@@ -29,6 +30,8 @@ data class XlsxViewerState(
     val isSaving: Boolean = false,
     /** Currently editing cell as (rowIndex, colIndex), or null if not editing a cell. */
     val editingCell: Pair<Int, Int>? = null,
+    val isPasswordRequired: Boolean = false,
+    val passwordError: String? = null,
 )
 
 data class XlsxSearchState(
@@ -82,10 +85,20 @@ class XlsxViewerViewModel @Inject constructor(
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true, errorMessage = null)
 
+            val name = displayName ?: resolveFileName(uri) ?: "Spreadsheet"
+
+            // Check if file is password-protected (OLE2 container)
+            if (OoxmlDecryptor.isOle2File(context, uri)) {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    isPasswordRequired = true,
+                    fileName = name,
+                )
+                return@launch
+            }
+
             try {
                 val document = XlsxParser.parse(context, uri)
-                val name = displayName ?: resolveFileName(uri) ?: "Spreadsheet"
-
                 _state.value = _state.value.copy(
                     isLoading = false,
                     fileName = name,
@@ -96,6 +109,47 @@ class XlsxViewerViewModel @Inject constructor(
                     isLoading = false,
                     errorMessage = "Failed to open spreadsheet: ${e.message ?: "Unknown error"}",
                 )
+            }
+        }
+    }
+
+    fun submitPassword(password: String) {
+        val uri = documentUri ?: return
+
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true, passwordError = null)
+
+            when (val result = OoxmlDecryptor.decrypt(context, uri, password)) {
+                is OoxmlDecryptor.DecryptResult.Success -> {
+                    try {
+                        val document = XlsxParser.parse(result.inputStream)
+                        _state.value = _state.value.copy(
+                            isLoading = false,
+                            isPasswordRequired = false,
+                            passwordError = null,
+                            document = document,
+                        )
+                    } catch (e: Exception) {
+                        _state.value = _state.value.copy(
+                            isLoading = false,
+                            isPasswordRequired = false,
+                            errorMessage = "Failed to open spreadsheet: ${e.message ?: "Unknown error"}",
+                        )
+                    }
+                }
+                is OoxmlDecryptor.DecryptResult.WrongPassword -> {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        passwordError = "Incorrect password",
+                    )
+                }
+                is OoxmlDecryptor.DecryptResult.Failed -> {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        isPasswordRequired = false,
+                        errorMessage = "Failed to decrypt: ${result.message}",
+                    )
+                }
             }
         }
     }

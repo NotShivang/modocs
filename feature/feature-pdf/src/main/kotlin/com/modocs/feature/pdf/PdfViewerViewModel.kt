@@ -52,6 +52,8 @@ data class PdfViewerState(
     val currentPage: Int = 0,
     val fileName: String = "",
     val errorMessage: String? = null,
+    val isPasswordRequired: Boolean = false,
+    val passwordError: String? = null,
 )
 
 data class FillSignState(
@@ -91,6 +93,7 @@ class PdfViewerViewModel @Inject constructor(
     private var documentUri: Uri? = null
     private var pageTexts: List<PdfTextExtractor.PageText> = emptyList()
     private var searchJob: Job? = null
+    private var decryptedTempFile: java.io.File? = null
 
     fun getRenderer(): PdfRendererWrapper? = pdfRenderer
 
@@ -102,28 +105,81 @@ class PdfViewerViewModel @Inject constructor(
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true, errorMessage = null)
 
-            val renderer = PdfRendererWrapper.open(context, uri)
-            if (renderer == null) {
-                _state.value = _state.value.copy(
-                    isLoading = false,
-                    errorMessage = "Failed to open PDF. The file may be corrupted or password-protected.",
-                )
-                return@launch
-            }
-
-            pdfRenderer = renderer
-
             val name = displayName
                 ?: resolveFileName(uri)
                 ?: "Document"
 
-            _state.value = _state.value.copy(
-                isLoading = false,
-                pageCount = renderer.pageCount,
-                fileName = name,
-            )
+            when (val result = PdfRendererWrapper.open(context, uri)) {
+                is PdfOpenResult.Success -> {
+                    pdfRenderer = result.wrapper
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        pageCount = result.wrapper.pageCount,
+                        fileName = name,
+                    )
+                    extractTextAsync(uri)
+                }
+                is PdfOpenResult.PasswordRequired -> {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        isPasswordRequired = true,
+                        fileName = name,
+                    )
+                }
+                is PdfOpenResult.Failed -> {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        errorMessage = "Failed to open PDF: ${result.message}",
+                    )
+                }
+            }
+        }
+    }
 
-            extractTextAsync(uri)
+    fun submitPassword(password: String) {
+        val uri = documentUri ?: return
+
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true, passwordError = null)
+
+            when (val result = PdfDecryptor.decrypt(context, uri, password)) {
+                is PdfDecryptor.DecryptResult.Success -> {
+                    decryptedTempFile = result.tempFile
+
+                    when (val openResult = PdfRendererWrapper.openFile(result.tempFile)) {
+                        is PdfOpenResult.Success -> {
+                            pdfRenderer = openResult.wrapper
+                            _state.value = _state.value.copy(
+                                isLoading = false,
+                                isPasswordRequired = false,
+                                passwordError = null,
+                                pageCount = openResult.wrapper.pageCount,
+                            )
+                            extractTextAsync(uri)
+                        }
+                        else -> {
+                            _state.value = _state.value.copy(
+                                isLoading = false,
+                                isPasswordRequired = false,
+                                errorMessage = "Failed to open decrypted PDF",
+                            )
+                        }
+                    }
+                }
+                is PdfDecryptor.DecryptResult.WrongPassword -> {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        passwordError = "Incorrect password",
+                    )
+                }
+                is PdfDecryptor.DecryptResult.Failed -> {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        isPasswordRequired = false,
+                        errorMessage = "Failed to decrypt: ${result.message}",
+                    )
+                }
+            }
         }
     }
 
@@ -665,6 +721,8 @@ class PdfViewerViewModel @Inject constructor(
         searchJob?.cancel()
         pdfRenderer?.close()
         pdfRenderer = null
+        decryptedTempFile?.delete()
+        decryptedTempFile = null
     }
 }
 

@@ -14,6 +14,12 @@ import kotlinx.coroutines.withContext
  * Wrapper around Android's PdfRenderer that handles page rendering
  * with caching and thread safety.
  */
+sealed class PdfOpenResult {
+    data class Success(val wrapper: PdfRendererWrapper) : PdfOpenResult()
+    data object PasswordRequired : PdfOpenResult()
+    data class Failed(val message: String) : PdfOpenResult()
+}
+
 class PdfRendererWrapper private constructor(
     private val fileDescriptor: ParcelFileDescriptor,
     private val renderer: AndroidPdfRenderer,
@@ -110,15 +116,32 @@ class PdfRendererWrapper private constructor(
         /**
          * Open a PDF from a content URI.
          */
-        suspend fun open(context: Context, uri: Uri): PdfRendererWrapper? {
+        suspend fun open(context: Context, uri: Uri): PdfOpenResult {
             return withContext(Dispatchers.IO) {
                 try {
                     val fd = context.contentResolver.openFileDescriptor(uri, "r")
-                        ?: return@withContext null
+                        ?: return@withContext PdfOpenResult.Failed("Cannot open file")
                     val renderer = AndroidPdfRenderer(fd)
-                    PdfRendererWrapper(fd, renderer)
+                    PdfOpenResult.Success(PdfRendererWrapper(fd, renderer))
+                } catch (_: SecurityException) {
+                    PdfOpenResult.PasswordRequired
                 } catch (e: Exception) {
-                    null
+                    PdfOpenResult.Failed(e.message ?: "Failed to open PDF")
+                }
+            }
+        }
+
+        /**
+         * Open a PDF from a [File] (used for decrypted temp files).
+         */
+        suspend fun openFile(file: java.io.File): PdfOpenResult {
+            return withContext(Dispatchers.IO) {
+                try {
+                    val fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+                    val renderer = AndroidPdfRenderer(fd)
+                    PdfOpenResult.Success(PdfRendererWrapper(fd, renderer))
+                } catch (e: Exception) {
+                    PdfOpenResult.Failed(e.message ?: "Failed to open PDF")
                 }
             }
         }

@@ -126,6 +126,16 @@ fun DocxViewerScreen(
         viewModel.loadDocx(uri, displayName)
     }
 
+    // Password dialog
+    if (state.isPasswordRequired) {
+        com.modocs.core.ui.components.PasswordDialog(
+            onPasswordSubmit = { password -> viewModel.submitPassword(password) },
+            onDismiss = onNavigateBack,
+            isLoading = state.isLoading,
+            errorMessage = state.passwordError,
+        )
+    }
+
     // SAF launcher for "Save As"
     val saveAsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),

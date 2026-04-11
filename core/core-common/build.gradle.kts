@@ -24,4 +24,14 @@ android {
 dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
+
+    // OOXML decryption (password-protected DOCX/XLSX/PPTX)
+    implementation(libs.poi) {
+        exclude(group = "org.apache.logging.log4j")
+        exclude(group = "commons-logging")
+    }
+    implementation(libs.poi.ooxml.lite) {
+        exclude(group = "org.apache.logging.log4j")
+        exclude(group = "commons-logging")
+    }
 }

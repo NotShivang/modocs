@@ -50,4 +50,7 @@ dependencies {
 
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
+
+    // PDF decryption (password-protected PDFs)
+    implementation(libs.pdfbox.android)
 }
